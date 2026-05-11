@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LayoffShield — Marketing Automation</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050d1a;
+    --surface: #0a1628;
+    --surface2: #0f1f38;
+    --border: #1a3050;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-glow: rgba(34,197,94,.15);
+    --blue: #3b82f6;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,.08) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 30% at 80% 80%, rgba(59,130,246,.05) 0%, transparent 50%);
+  }
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding: 20px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    backdrop-filter: blur(10px);
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(5,13,26,.9);
+  }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; }
+  .logo-icon { width: 32px; height: 32px; background: var(--green); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .badge { font-size: 11px; background: var(--green-glow); border: 1px solid var(--green); color: var(--green); padding: 3px 10px; border-radius: 99px; font-family: 'JetBrains Mono', monospace; }
+  #yt-status { font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .connect-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    font-family: inherit; transition: all .2s;
+  }
+  .connect-btn:hover { border-color: var(--green); color: var(--green); }
+
+  .main { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+  h1 { font-size: 2rem; font-weight: 700; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 40px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+  .card-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 20px; }
+
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; margin-top: 16px; }
+  label:first-of-type { margin-top: 0; }
+  input, select, textarea {
+    width: 100%; padding: 10px 14px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-family: inherit; font-size: 14px;
+    transition: border-color .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--green);
+    box-shadow: 0 0 0 3px var(--green-glow);
+  }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media(max-width:600px){ .row { grid-template-columns: 1fr; } }
+
+  .toggle-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+  .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; background: var(--border); border-radius: 99px;
+    cursor: pointer; transition: .2s;
+  }
+  .slider:before {
+    content: ''; position: absolute; width: 16px; height: 16px;
+    left: 3px; top: 3px; background: white; border-radius: 50%; transition: .2s;
+  }
+  .toggle input:checked + .slider { background: var(--green); }
+  .toggle input:checked + .slider:before { transform: translateX(18px); }
+  .toggle-label { font-size: 13px; color: var(--text); }
+
+  .submit-btn {
+    width: 100%; padding: 14px;
+    background: var(--green); color: #050d1a;
+    border: none; border-radius: 10px; font-size: 15px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+    transition: background .2s, transform .1s;
+    margin-top: 24px;
+  }
+  .submit-btn:hover { background: #16a34a; }
+  .submit-btn:active { transform: scale(.99); }
+  .submit-btn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+  /* Jobs list */
+  .jobs-header { display: flex; align-items: center; justify-content: space-between; }
+  .refresh-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-family: inherit;
+    transition: all .2s;
+  }
+  .refresh-btn:hover { border-color: var(--blue); color: var(--blue); }
+
+  .job-item {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-top: 12px;
+    display: flex; align-items: flex-start; gap: 14px;
+  }
+  .job-status-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .job-info { flex: 1; min-width: 0; }
+  .job-title { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
+  .job-msg { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-links { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+  .job-link {
+    font-size: 11px; font-family: 'JetBrains Mono', monospace;
+    color: var(--green); text-decoration: none; border: 1px solid var(--green-dim);
+    padding: 2px 8px; border-radius: 4px;
+  }
+  .job-link:hover { background: var(--green-glow); }
+  .job-link.yt { color: var(--danger); border-color: var(--danger); }
+  .job-link.yt:hover { background: rgba(239,68,68,.1); }
+
+  .status-queued { background: var(--muted); }
+  .status-generating_prompt, .status-generating_video { background: var(--warning); animation: pulse 1.4s infinite; }
+  .status-video_ready, .status-uploading { background: var(--blue); animation: pulse 1.4s infinite; }
+  .status-done { background: var(--green); }
+  .status-error { background: var(--danger); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .prompt-preview {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #94a3b8;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; margin-top: 8px; white-space: pre-wrap; word-break: break-word;
+  }
+
+  .empty-state { text-align: center; padding: 40px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">🛡️</div>
+    LayoffShield
+    <span class="badge">Marketing Bot</span>
+  </div>
+  <div id="yt-status">
+    <span class="dot" id="yt-dot"></span>
+    <span id="yt-label">Checking...</span>
+    <button class="connect-btn" id="yt-btn" onclick="connectYouTube()">Connect YouTube</button>
+  </div>
+</header>
+
+<main class="main">
+  <h1>Marketing Video Generator</h1>
+  <p class="subtitle">Groq generates the script · PixVerse renders the video · Auto-posts to YouTube</p>
+
+  <div class="card">
+    <div class="card-title">🎬 New Video Campaign</div>
+
+    <label>Topic / Feature to Market *</label>
+    <input id="topic" type="text" placeholder="e.g. AI mock interview for laid-off professionals" />
+
+    <div class="row">
+      <div>
+        <label>Duration (seconds)</label>
+        <select id="duration">
+          <option value="10">10s (recommended)</option>
+          <option value="15">15s</option>
+          <option value="8">8s</option>
+          <option value="5">5s</option>
+        </select>
+      </div>
+      <div>
+        <label>Quality (free tier)</label>
+        <select id="quality">
+          <option value="720p">720p (best free)</option>
+          <option value="540p">540p</option>
+          <option value="360p">360p</option>
+        </select>
+      </div>
+      <div>
+        <label>Style</label>
+        <select id="style">
+          <option value="">Auto</option>
+          <option value="realistic">Realistic</option>
+          <option value="anime">Anime</option>
+          <option value="3d_animation">3D Animation</option>
+        </select>
+      </div>
+    </div>
+
+    <label>YouTube Title (optional)</label>
+    <input id="yt_title" type="text" placeholder="Leave blank to auto-generate" />
+
+    <label>YouTube Description (optional)</label>
+    <textarea id="yt_desc" placeholder="Leave blank to use LayoffShield template description"></textarea>
+
+    <label>YouTube Tags (comma-separated, optional)</label>
+    <input id="yt_tags" type="text" placeholder="LayoffShield, AI career coach, layoff preparation" />
+
+    <div class="toggle-row">
+      <label class="toggle">
+        <input type="checkbox" id="auto_upload" checked>
+        <span class="slider"></span>
+      </label>
+      <span class="toggle-label">Auto-upload to YouTube after generation</span>
+    </div>
+
+    <button class="submit-btn" id="generate-btn" onclick="generate()">⚡ Generate & Post Video</button>
+  </div>
+
+  <div class="card">
+    <div class="jobs-header">
+      <div class="card-title" style="margin-bottom:0">📋 Pipeline Jobs</div>
+      <button class="refresh-btn" onclick="loadJobs()">↻ Refresh</button>
+    </div>
+    <div id="jobs-list"><div class="empty-state">No jobs yet. Generate your first video above.</div></div>
+  </div>
+</main>
+
+<script>
+const api = '';
+
+async function checkAuth() {
+  try {
+    const r = await fetch(`${api}/auth/status`);
+    const d = await r.json();
+    const dot = document.getElementById('yt-dot');
+    const label = document.getElementById('yt-label');
+    const btn = document.getElementById('yt-btn');
+    if (d.youtube_connected) {
+      dot.className = 'dot connected';
+      label.textContent = 'YouTube connected';
+      btn.style.display = 'none';
+    } else {
+      dot.className = 'dot';
+      label.textContent = 'YouTube not connected';
+      btn.style.display = '';
+    }
+  } catch(e) { console.error(e); }
+}
+
+function connectYouTube() {
+  window.open(`${api}/auth/youtube`, '_blank', 'width=500,height=700');
+  setTimeout(checkAuth, 5000);
+}
+
+async function generate() {
+  const topic = document.getElementById('topic').value.trim();
+  if (!topic) { alert('Please enter a topic.'); return; }
+
+  const btn = document.getElementById('generate-btn');
+  btn.disabled = true; btn.textContent = '⏳ Starting pipeline...';
+
+  const tags = document.getElementById('yt_tags').value
+    .split(',').map(t=>t.trim()).filter(Boolean);
+
+  const payload = {
+    topic,
+    duration: parseInt(document.getElementById('duration').value),
+    quality: document.getElementById('quality').value,
+    style: document.getElementById('style').value || null,
+    auto_upload: document.getElementById('auto_upload').checked,
+    youtube_title: document.getElementById('yt_title').value || null,
+    youtube_description: document.getElementById('yt_desc').value || null,
+    youtube_tags: tags.length ? tags : null,
+  };
+
+  try {
+    const r = await fetch(`${api}/generate`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+    
+    // Clear form
+    document.getElementById('topic').value = '';
+    
+    await loadJobs();
+    // Auto-refresh while job running
+    startPolling(d.job_id);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ Generate & Post Video';
+  }
+}
+
+const pollingTimers = {};
+
+function startPolling(jobId) {
+  if (pollingTimers[jobId]) return;
+  pollingTimers[jobId] = setInterval(async () => {
+    await loadJobs();
+    const job = await fetch(`${api}/jobs/${jobId}`).then(r=>r.json());
+    if (['done','error'].includes(job.status)) {
+      clearInterval(pollingTimers[jobId]);
+      delete pollingTimers[jobId];
+    }
+  }, 4000);
+}
+
+function statusColor(s) {
+  const m = {
+    queued:'#64748b', generating_prompt:'#f59e0b', generating_video:'#f59e0b',
+    video_ready:'#3b82f6', uploading:'#3b82f6', done:'#22c55e', error:'#ef4444',
+  };
+  return m[s] || '#64748b';
+}
+
+async function loadJobs() {
+  try {
+    const r = await fetch(`${api}/jobs`);
+    const jobs = await r.json();
+    const container = document.getElementById('jobs-list');
+    
+    if (!jobs.length) {
+      container.innerHTML = '<div class="empty-state">No jobs yet. Generate your first video above.</div>';
+      return;
+    }
+
+    // Sort newest first
+    jobs.reverse();
+
+    container.innerHTML = jobs.map(j => `
+      <div class="job-item">
+        <div class="job-status-dot" style="background:${statusColor(j.status)}; ${['generating_prompt','generating_video','uploading','video_ready'].includes(j.status)?'animation:pulse 1.4s infinite':''}"></div>
+        <div class="job-info">
+          <div class="job-title">${j.job_id.slice(0,8)}… — <span style="color:${statusColor(j.status)}">${j.status}</span></div>
+          <div class="job-msg">${j.message}</div>
+          ${j.prompt_used ? `<div class="prompt-preview">${j.prompt_used}</div>` : ''}
+          ${j.error ? `<div style="color:#ef4444;font-size:12px;margin-top:6px">⚠️ ${j.error}</div>` : ''}
+          <div class="job-links">
+            ${j.video_url ? `<a class="job-link" href="${j.video_url}" target="_blank">▶ Watch Video</a>` : ''}
+            ${j.youtube_url ? `<a class="job-link yt" href="${j.youtube_url}" target="_blank">▶ YouTube</a>` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { console.error(e); }
+}
+
+checkAuth();
+loadJobs();
+setInterval(checkAuth, 10000);
+</script>
+</body>
+</html>

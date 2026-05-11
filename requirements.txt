@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+playwright==1.54.0
+pydantic-settings==2.4.0
+
+# Groq (via plain httpx — no extra SDK needed)
+
+# Google / YouTube
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.148.0

@@ -1,0 +1,5 @@
+.env
+.pixverse-playwright
+__pycache__
+youtube_token.json
+downloads/
