@@ -18,7 +18,7 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -155,6 +155,24 @@ async def list_jobs():
     return [{"job_id": k, **v} for k, v in jobs.items()]
 
 
+@app.get("/downloads/{filename}")
+async def serve_download(filename: str):
+    """Serve files from the configured download directory."""
+    path = Path(settings.download_dir) / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
+
+
+# Legacy path support: some clients request the raw /tmp/layoffshield_videos/... URL
+@app.get("/tmp/layoffshield_videos/{filename}")
+async def serve_legacy_tmp(filename: str):
+    path = Path(settings.download_dir) / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
+
+
 # ── Pipeline ───────────────────────────────────
 
 async def run_pipeline(job_id: str, req: VideoRequest):
@@ -180,7 +198,17 @@ async def run_pipeline(job_id: str, req: VideoRequest):
         # Step 3: Poll for completion
         update("generating_video", f"⏳ Waiting for PixVerse (video_id={video_id})...")
         video_url = await poll_video_status(video_id)
-        update("video_ready", "✅ Video generated!", video_url=video_url)
+        # If PixVerse returned a local filesystem path inside our download dir,
+        # expose it via a server route so the frontend can fetch it.
+        try:
+            if video_url and Path(video_url).exists():
+                disp = f"/downloads/{Path(video_url).name}"
+            else:
+                disp = video_url
+        except Exception:
+            disp = video_url
+
+        update("video_ready", "✅ Video generated!", video_url=disp)
 
         if not req.auto_upload:
             update("done", "✅ Done (upload skipped)", video_url=video_url)

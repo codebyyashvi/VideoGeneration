@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 from config import settings
+from pathlib import Path as _Path
 
 # Windows event loop fix for Playwright subprocess support
 if sys.platform == "win32":
@@ -310,40 +311,204 @@ async def _click_first_grid_video(page) -> bool:
     try:
         # First, make sure we're looking at the Created tab results
         # Try clicking the video card by targeting the first large img element in the grid
-        all_imgs = page.locator('img')
-        img_count = await all_imgs.count()
-        
-        for i in range(img_count):
-            img = all_imgs.nth(i)
+        # Prefer explicit grid/gallery containers and choose the leftmost item
+        candidate_selectors = [
+            'div[class*="grid"] > div',
+            '[class*="gallery"] > div',
+            '[class*="video-list"] > div',
+            '[class*="gallery-list"] > div',
+            'div[role="listitem"]',
+            'img'
+        ]
+
+        candidates: list[tuple[object, dict]] = []
+
+        for sel in candidate_selectors:
             try:
-                box = await img.bounding_box()
-                if not box:
-                    continue
-                    
-                # Skip header/navigation images (small images in top area)
-                if box["y"] < 150 or box["width"] < 100:
-                    continue
-                
-                # Found a large image in the main content area
-                # Try to click on it or its parent
-                try:
-                    # Try clicking the image's parent container
-                    await img.click(force=True, timeout=3000)
-                    return True
-                except Exception:
-                    # Try parent of parent
+                locator = page.locator(sel)
+                count = await locator.count()
+                for idx in range(count):
+                    node = locator.nth(idx)
                     try:
-                        parent = page.locator(f'img >> nth={i}').locator('..')
-                        await parent.click(force=True, timeout=3000)
-                        return True
+                        box = await node.bounding_box()
                     except Exception:
-                        pass
+                        box = None
+                    if not box:
+                        continue
+                    # Exclude header/navigation and very small images
+                    if box.get("y", 0) < 150 or box.get("width", 0) < 80 or box.get("height", 0) < 60:
+                        continue
+                    candidates.append((node, box))
             except Exception:
                 continue
+
+        if not candidates:
+            return False
+
+        # Determine top row: find minimum y then keep items within a small threshold
+        ys = [b["y"] for (_, b) in candidates]
+        min_y = min(ys)
+        threshold = 24
+        top_row = [(n, b) for (n, b) in candidates if b["y"] <= min_y + threshold]
+
+        # Choose leftmost among top_row (smallest x)
+        chosen = None
+        if top_row:
+            chosen = min(top_row, key=lambda nb: nb[1]["x"])
+        else:
+            # fallback to overall leftmost
+            chosen = min(candidates, key=lambda nb: nb[1]["x"])
+
+        if chosen:
+            node, box = chosen
+            try:
+                await node.scroll_into_view_if_needed()
+                await asyncio.sleep(0.35)
+            except Exception:
+                pass
+            try:
+                await node.click(force=True, timeout=5000)
+                return True
+            except Exception:
+                try:
+                    parent = node.locator('..')
+                    await parent.click(force=True, timeout=5000)
+                    return True
+                except Exception:
+                    return False
     except Exception:
         pass
     
     return False
+
+
+async def _wait_for_thumbnail_ready(node, timeout_seconds: int = 180) -> bool:
+    """Wait until the thumbnail/node shows a completion indicator (e.g., '100%','Complete')."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            # If the node itself is an <img>, check its src immediately
+            try:
+                tag = await node.evaluate("n => n.tagName.toLowerCase()")
+            except Exception:
+                tag = None
+            if tag == "img":
+                try:
+                    src = await node.get_attribute('src') or ''
+                    if src and any(x in src for x in ('pixverse', 'media.pixverse.ai', 'blob:', '.png', '.jpg', '.jpeg')):
+                        return True
+                except Exception:
+                    pass
+
+            # Check for descendant text like '100%'
+            if await node.locator('text=/100\\s*%/i').count() > 0:
+                return True
+            # Fallback: check inner text for completion keywords
+            try:
+                txt = (await node.inner_text()) or ""
+            except Exception:
+                txt = ""
+            if re.search(r"\b(100\s*%|complete|completed|finished)\b", txt, re.I):
+                return True
+
+            # If the node contains an <img>, wait for its src to become a real media URL
+            try:
+                img = node.locator('img').first
+                if await img.count() > 0:
+                    src = await img.get_attribute('src') or ''
+                    if src:
+                        # Consider ready if src points to pixverse media, blob, or an image file
+                        if any(x in src for x in ('pixverse', 'media.pixverse.ai', 'blob:', '.png', '.jpg', '.jpeg')):
+                            return True
+            except Exception:
+                pass
+
+            # If the node contains a progress-like element (aria-valuenow or progress tag)
+            try:
+                prog = node.locator('[aria-valuenow]')
+                if await prog.count() > 0:
+                    val = await prog.first.get_attribute('aria-valuenow')
+                    if val and int(val) >= 100:
+                        return True
+            except Exception:
+                pass
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
+async def _wait_for_generation_overlay(page, timeout_seconds: int = 300) -> bool:
+    """Wait until any generation overlay or progress text disappears from the page."""
+    deadline = time.monotonic() + timeout_seconds
+    seen = False
+    while time.monotonic() < deadline:
+        try:
+            # Check for common generating indicators
+            count_generating = 0
+            try:
+                count_generating += await page.locator('text=/your video is generating/i').count()
+            except Exception:
+                pass
+            try:
+                count_generating += await page.locator('text=/generating/i').count()
+            except Exception:
+                pass
+            try:
+                count_generating += await page.locator('text=/\\d{1,3}\\s*%/').count()
+            except Exception:
+                pass
+
+            if count_generating > 0:
+                seen = True
+                await asyncio.sleep(1)
+                continue
+            # If we previously saw generating indicators and they are now gone, consider finished
+            if seen:
+                return True
+            # If never saw any indicator, return False to allow other heuristics
+            return False
+        except Exception:
+            await asyncio.sleep(1)
+    return False
+
+
+async def _js_click_leftmost_via_dom(page) -> bool:
+        """Run in-page JS to find the leftmost top-row item and dispatch a click event."""
+        script = r'''
+        (() => {
+            function candidatesFrom(sel){
+                return Array.from(document.querySelectorAll(sel) || []);
+            }
+            const sels = ['div[class*="grid"] > div', '[class*="gallery"] > div', 'div[role="listitem"]', 'a[href*="video"]', 'img'];
+            let items = [];
+            for(const s of sels){ items = items.concat(candidatesFrom(s)); }
+            items = items.filter(n => {
+                try{
+                    const r = n.getBoundingClientRect();
+                    return r && r.width >= 80 && r.height >= 60 && r.top > 120;
+                }catch(e){return false}
+            });
+            if(!items.length) return false;
+            // Find top row then leftmost
+            let minY = Math.min(...items.map(n=>n.getBoundingClientRect().top));
+            const topRow = items.filter(n => n.getBoundingClientRect().top <= minY + 24);
+            const chosen = (topRow.length? topRow : items).reduce((a,b)=> a.getBoundingClientRect().left < b.getBoundingClientRect().left? a : b);
+            if(!chosen) return false;
+            try{
+                const ev = new MouseEvent('click', {bubbles:true, cancelable:true, view:window});
+                chosen.dispatchEvent(ev);
+                return true;
+            }catch(e){
+                try{ chosen.click(); return true }catch(e2){ return false }
+            }
+        })();
+        '''
+        try:
+                result = await page.evaluate(script)
+                return bool(result)
+        except Exception:
+                return False
 
 
 async def _wait_for_result_download(page, job_id: str) -> str:
@@ -358,28 +523,134 @@ async def _wait_for_result_download(page, job_id: str) -> str:
 
     while time.monotonic() < deadline:
         poll_count += 1
+
+        # Once: wait for generation overlay/text to finish (so new thumbnail appears leftmost)
+        if not state.get("overlay_waited"):
+            try:
+                finished = await _wait_for_generation_overlay(page, timeout_seconds=300)
+                state["overlay_waited"] = "1"
+                _generation_state[job_id] = state
+                if finished:
+                    await page.wait_for_timeout(500)
+                    try:
+                        clicked_native = await _click_first_grid_video(page)
+                        if clicked_native:
+                            await page.wait_for_timeout(2000)
+                        else:
+                            # fallback: try an in-page JS click on the leftmost item
+                            try:
+                                clicked = await _js_click_leftmost_via_dom(page)
+                                if clicked:
+                                    print(f"[pixverse-debug] js fallback clicked leftmost for job={job_id}")
+                                    await page.wait_for_timeout(2000)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                state["overlay_waited"] = "1"
         
-        # Try to click newly generated video thumbnail using multiple strategies
+        # Identify newly added thumbnails by comparing to baseline snapshot and click leftmost new one
         try:
-            img_selectors = [
-                'img[src*="pixverse%2Fvideo%2Fframe"]',
-                'img[src*="media.pixverse.ai/pixverse%2Fvideo%2Fframe"]',
-                'img[src*="pixverse"][src*="frame"]',
-            ]
-            
-            thumbnail_count = 0
-            for selector in img_selectors:
-                count = await _count_locator(page.locator(selector))
-                thumbnail_count = max(thumbnail_count, count)
-            
-            if thumbnail_count > baseline_thumbnail_count:
-                # Strategy 1: Try specific thumbnail click
-                if await _click_first_visible_thumbnail(page):
-                    await page.wait_for_timeout(2500)
+            imgs = page.locator('img')
+            img_count = await imgs.count()
+            current: list[tuple[object, str, dict]] = []
+            for i in range(img_count):
+                img = imgs.nth(i)
+                try:
+                    box = await img.bounding_box()
+                except Exception:
+                    box = None
+                if not box:
+                    continue
+                if box.get("y", 0) < 150:
+                    continue
+                src = await img.get_attribute("src") or ""
+                current.append((img, src, box))
+
+            baseline_thumbs = state.get("baseline_thumbs", []) or []
+
+            def _is_new(src: str, box: dict) -> bool:
+                # If same src exists in baseline, treat as existing
+                for b in baseline_thumbs:
+                    if b.get("src") and src and b.get("src") == src:
+                        return False
+                    # Also consider position overlap as same
+                    if abs(b.get("x", 0) - box.get("x", 0)) < 16 and abs(b.get("y", 0) - box.get("y", 0)) < 16:
+                        return False
+                return True
+
+            new_nodes: list[tuple[object, dict]] = []
+            for (img, src, box) in current:
+                if _is_new(src, box):
+                    new_nodes.append((img, box))
+
+            if new_nodes:
+                # choose those on the top row (smallest y within threshold), then leftmost (smallest x)
+                ys = [b["y"] for (_, b) in new_nodes]
+                min_y = min(ys)
+                threshold = 24
+                top_row = [(n, b) for (n, b) in new_nodes if b["y"] <= min_y + threshold]
+                chosen = None
+                if top_row:
+                    chosen = min(top_row, key=lambda nb: nb[1]["x"])
                 else:
-                    # Strategy 2: If specific selector failed, try aggressive grid click
-                    if await _click_first_grid_video(page):
+                    chosen = min(new_nodes, key=lambda nb: nb[1]["x"])
+
+                if chosen:
+                    node, box = chosen
+                    # Diagnostic capture: save outerHTML and a screenshot of the candidate
+                    try:
+                        debug_dir = _Path(settings.download_dir) / "debug_snapshots"
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        ts = int(time.time())
+                        try:
+                            outer = await node.evaluate("n => n.outerHTML")
+                        except Exception:
+                            outer = await page.content()
+                        try:
+                            screenshot_bytes = await node.screenshot()
+                        except Exception:
+                            screenshot_bytes = None
+
+                        html_file = debug_dir / f"thumb_{job_id}_{ts}.html"
+                        with html_file.open("w", encoding="utf-8") as f:
+                            f.write(outer or "")
+                        if screenshot_bytes:
+                            (debug_dir / f"thumb_{job_id}_{ts}.png").write_bytes(screenshot_bytes)
+
+                        print(f"[pixverse-debug] candidate chosen for job={job_id} box={box}")
+                        if screenshot_bytes:
+                            print(f"[pixverse-debug] saved screenshot: {debug_dir / f'thumb_{job_id}_{ts}.png'}")
+                        print(f"[pixverse-debug] saved html: {html_file}")
+                    except Exception as exc:
+                        print("[pixverse-debug] failed to capture diagnostic snapshot:", exc)
+
+                    # Wait until the thumbnail shows completion (100%) before clicking
+                    try:
+                        ready = await _wait_for_thumbnail_ready(node, timeout_seconds=180)
+                    except Exception:
+                        ready = False
+
+                    if not ready:
+                        # Not yet ready; continue polling
+                        print(f"[pixverse-debug] thumbnail not ready yet for job={job_id}")
+                        continue
+
+                    try:
+                        await node.scroll_into_view_if_needed()
+                        await asyncio.sleep(0.35)
+                    except Exception:
+                        pass
+                    try:
+                        await node.click(force=True, timeout=5000)
                         await page.wait_for_timeout(2500)
+                    except Exception:
+                        try:
+                            await node.locator('..').click(force=True, timeout=5000)
+                            await page.wait_for_timeout(2500)
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -465,9 +736,33 @@ async def generate_video(
 
     baseline_video_count = await _count_locator(page.locator("video"))
     baseline_download_count = await _count_locator(page.locator('a[download]'))
-    baseline_thumbnail_count = await _count_locator(
-        page.locator('img[src*="pixverse%2Fvideo%2Fframe"], img[src*="media.pixverse.ai/pixverse%2Fvideo%2Fframe"]')
-    )
+
+    # Capture a snapshot of existing thumbnail images (src + bounding box)
+    baseline_thumbs: list[dict] = []
+    try:
+        imgs = page.locator('img')
+        img_count = await imgs.count()
+        for i in range(img_count):
+            img = imgs.nth(i)
+            try:
+                box = await img.bounding_box()
+            except Exception:
+                box = None
+            if not box:
+                continue
+            # ignore images in header/navigation
+            if box.get("y", 0) < 150:
+                continue
+            src = await img.get_attribute("src") or ""
+            baseline_thumbs.append({
+                "src": src,
+                "x": box.get("x", 0),
+                "y": box.get("y", 0),
+                "w": box.get("width", 0),
+                "h": box.get("height", 0),
+            })
+    except Exception:
+        baseline_thumbs = []
 
     prompt_box = page.get_by_role(
         "textbox", name=re.compile("Describe the content you want to create", re.I)
@@ -483,7 +778,7 @@ async def generate_video(
         "aspect_ratio": aspect_ratio,
         "baseline_video_count": str(baseline_video_count),
         "baseline_download_count": str(baseline_download_count),
-        "baseline_thumbnail_count": str(baseline_thumbnail_count),
+        "baseline_thumbs": baseline_thumbs,
     }
 
     create_button = page.get_by_role("button", name=re.compile(r"Create", re.I))
