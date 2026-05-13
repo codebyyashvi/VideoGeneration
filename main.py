@@ -131,6 +131,10 @@ async def generate_marketing_video(req: VideoRequest, background_tasks: Backgrou
         "youtube_url": None,
         "prompt_used": None,
         "error": None,
+        "youtube_title": req.youtube_title,
+        "youtube_description": req.youtube_description,
+        "youtube_tags": req.youtube_tags,
+        "auto_upload": req.auto_upload,
     }
 
     background_tasks.add_task(run_pipeline, job_id, req)
@@ -140,6 +144,22 @@ async def generate_marketing_video(req: VideoRequest, background_tasks: Backgrou
         status="queued",
         message="Pipeline started. Poll /jobs/{job_id} for status.",
     )
+
+
+@app.post('/jobs/{job_id}/fetch')
+async def fetch_job(job_id: str, background_tasks: BackgroundTasks):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail='Job not found')
+    background_tasks.add_task(fetch_and_open_job, job_id)
+    return JSONResponse({'status':'started', 'message':'Fetching video in background'})
+
+
+@app.post('/jobs/{job_id}/upload')
+async def upload_job(job_id: str, background_tasks: BackgroundTasks):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail='Job not found')
+    background_tasks.add_task(upload_job_video, job_id)
+    return JSONResponse({'status':'started', 'message':'Upload started in background'})
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
@@ -195,11 +215,28 @@ async def run_pipeline(job_id: str, req: VideoRequest):
             style=req.style,
         )
 
-        # Step 3: Poll for completion
-        update("generating_video", f"⏳ Waiting for PixVerse (video_id={video_id})...")
-        video_url = await poll_video_status(video_id)
-        # If PixVerse returned a local filesystem path inside our download dir,
-        # expose it via a server route so the frontend can fetch it.
+        # Job now waits for user to 'See Video' to fetch it
+        update("waiting_for_user", "🟡 Video submitted — click 'See Video' to open and fetch generated video", prompt_used=prompt)
+        # store video generation token so fetch endpoint can use it
+        jobs[job_id]["generation_token"] = video_id
+    except Exception as e:
+        jobs[job_id].update({"status": "error", "message": "Pipeline failed", "error": str(e)})
+        raise
+
+
+async def fetch_and_open_job(job_id: str):
+    """Background task: poll PixVerse for the given job's generation token and update job with video_url."""
+    if job_id not in jobs:
+        return
+    j = jobs[job_id]
+    token = j.get("generation_token")
+    if not token:
+        j.update({"status": "error", "message": "No generation token for job"})
+        return
+    j.update({"status": "fetching", "message": "🔎 Opening PixVerse and fetching generated video..."})
+    try:
+        video_url = await poll_video_status(token)
+        # map local paths to server-accessible URL
         try:
             if video_url and Path(video_url).exists():
                 disp = f"/downloads/{Path(video_url).name}"
@@ -207,32 +244,31 @@ async def run_pipeline(job_id: str, req: VideoRequest):
                 disp = video_url
         except Exception:
             disp = video_url
-
-        update("video_ready", "✅ Video generated!", video_url=disp)
-
-        if not req.auto_upload:
-            update("done", "✅ Done (upload skipped)", video_url=video_url)
-            return
-
-        # Step 4: Download video
-        update("uploading", "⬇️ Downloading video...")
-        local_path = await download_video(video_url, job_id)
-
-        # Step 5: Upload to YouTube
-        update("uploading", "📤 Uploading to YouTube...")
-        title = req.youtube_title or f"LayoffShield – {req.topic}"
-        description = req.youtube_description or build_yt_description(req.topic)
-        tags = req.youtube_tags or ["LayoffShield", "career", "layoff", "AI", "job security"]
-
-        yt_url = await upload_to_youtube(local_path, title, description, tags)
-        update("done", "🎉 Posted to YouTube!", video_url=video_url, youtube_url=yt_url)
-
-        # Cleanup local file
-        Path(local_path).unlink(missing_ok=True)
-
+        j.update({"status": "video_ready", "message": "✅ Video ready to watch", "video_url": disp})
     except Exception as e:
-        jobs[job_id].update({"status": "error", "message": "Pipeline failed", "error": str(e)})
-        raise
+        j.update({"status": "error", "message": "Failed to fetch video", "error": str(e)})
+
+
+async def upload_job_video(job_id: str):
+    if job_id not in jobs:
+        return
+    j = jobs[job_id]
+    video_url = j.get("video_url")
+    if not video_url:
+        j.update({"status": "error", "message": "No video to upload"})
+        return
+    j.update({"status": "uploading", "message": "⬇️ Downloading video for upload..."})
+    try:
+        local_path = await download_video(video_url, job_id)
+        j.update({"message": "📤 Uploading to YouTube..."})
+        title = j.get("youtube_title") or f"LayoffShield – {j.get('prompt_used','Video')}"
+        description = j.get("youtube_description") or build_yt_description(j.get('prompt_used',''))
+        tags = j.get("youtube_tags") or ["LayoffShield", "career"]
+        yt_url = await upload_to_youtube(local_path, title, description, tags)
+        j.update({"status": "done", "message": "🎉 Posted to YouTube!", "youtube_url": yt_url})
+        Path(local_path).unlink(missing_ok=True)
+    except Exception as e:
+        j.update({"status": "error", "message": "Upload failed", "error": str(e)})
 
 
 def build_yt_description(topic: str) -> str:

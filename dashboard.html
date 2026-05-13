@@ -321,6 +321,20 @@ function startPolling(jobId) {
   }, 4000);
 }
 
+async function seeVideo(jobId){
+  try{
+    await fetch(`${api}/jobs/${jobId}/fetch`, {method:'POST'});
+    startPolling(jobId);
+  }catch(e){ alert('Error starting fetch: '+e.message) }
+}
+
+async function uploadVideo(jobId){
+  try{
+    await fetch(`${api}/jobs/${jobId}/upload`, {method:'POST'});
+    startPolling(jobId);
+  }catch(e){ alert('Error starting upload: '+e.message) }
+}
+
 function statusColor(s) {
   const m = {
     queued:'#64748b', generating_prompt:'#f59e0b', generating_video:'#f59e0b',
@@ -353,6 +367,8 @@ async function loadJobs() {
           ${j.error ? `<div style="color:#ef4444;font-size:12px;margin-top:6px">⚠️ ${j.error}</div>` : ''}
           <div class="job-links">
             ${j.video_url ? `<a class="job-link" href="${j.video_url}" target="_blank">▶ Watch Video</a>` : ''}
+            ${(!j.video_url && j.status === 'waiting_for_user') ? `<a class="job-link" href="#" onclick="seeVideo('${j.job_id}')">👁️ See Video</a>` : ''}
+            ${j.video_url && !j.youtube_url ? `<a class="job-link" href="#" onclick="uploadVideo('${j.job_id}')">⬆️ Upload to YouTube</a>` : ''}
             ${j.youtube_url ? `<a class="job-link yt" href="${j.youtube_url}" target="_blank">▶ YouTube</a>` : ''}
           </div>
         </div>
