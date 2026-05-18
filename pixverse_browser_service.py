@@ -277,21 +277,97 @@ async def _ensure_logged_in(page) -> None:
 
 
 async def _best_effort_set_controls(page, duration: int, quality: str, aspect_ratio: str, style: Optional[str]) -> None:
-    desired_combo = f"{quality.upper()} {aspect_ratio} {duration}s"
+    """Set video generation controls: quality, aspect ratio, duration.
+    
+    CRITICAL: This function MUST set the duration correctly. PixVerse defaults to 5s,
+    so we need to actively click the user's selected duration button.
+    """
     try:
-        combo_button = page.get_by_role("button", name=re.compile(r"\b(360P|540P|720P)\b.*\b\d+s\b", re.I))
-        if await combo_button.count() > 0:
-            current_label = (await combo_button.first.inner_text()).strip().upper()
-            if current_label and current_label != desired_combo.upper():
-                await combo_button.first.click()
+        # Set Quality (360P, 540P, 720P)
+        if quality:
+            quality_buttons = page.get_by_role("button", name=re.compile(f"^{re.escape(quality.upper())}$", re.I))
+            if await quality_buttons.count() > 0:
+                await quality_buttons.first.click()
+                await asyncio.sleep(0.4)
+        
+        # Set Aspect Ratio (16:9, 4:3, 1:1, 3:4, 9:16)
+        if aspect_ratio:
+            aspect_buttons = page.get_by_role("button", name=re.compile(re.escape(aspect_ratio), re.I))
+            if await aspect_buttons.count() > 0:
+                await aspect_buttons.first.click()
+                await asyncio.sleep(0.4)
+        
+        # ═══════════════════════════════════════════════════════════════════════════════
+        # SET DURATION - MOST CRITICAL PART
+        # ═══════════════════════════════════════════════════════════════════════════════
+        duration_str = f"{duration}s"
+        duration_found = False
+        
+        # Strategy 1: Try exact button match by role and name
+        try:
+            duration_buttons = page.get_by_role("button", name=re.compile(f"^{duration_str}$", re.I))
+            if await duration_buttons.count() > 0:
+                await duration_buttons.first.click()
                 await asyncio.sleep(0.5)
-                for label in (quality.upper(), aspect_ratio, f"{duration}s"):
-                    option = page.get_by_role("button", name=re.compile(re.escape(label), re.I))
-                    if await option.count() > 0:
-                        await option.first.click()
-                        await asyncio.sleep(0.4)
-    except Exception:
-        pass
+                print(f"✓ Duration set to {duration_str} (Strategy 1: role match)")
+                duration_found = True
+        except Exception as e:
+            print(f"  Strategy 1 failed: {e}")
+        
+        # Strategy 2: Use locator with text content
+        if not duration_found:
+            try:
+                duration_buttons = page.locator(f"text='{duration_str}'").locator("..")  # Parent button
+                if await duration_buttons.count() > 0:
+                    await duration_buttons.first.click()
+                    await asyncio.sleep(0.5)
+                    print(f"✓ Duration set to {duration_str} (Strategy 2: text locator)")
+                    duration_found = True
+            except Exception as e:
+                print(f"  Strategy 2 failed: {e}")
+        
+        # Strategy 3: Find all buttons and click the one with matching text
+        if not duration_found:
+            try:
+                all_buttons = page.locator("button")
+                button_count = await all_buttons.count()
+                for i in range(button_count):
+                    btn = all_buttons.nth(i)
+                    try:
+                        text = (await btn.inner_text()).strip()
+                        if text == duration_str:
+                            # Scroll into view and click
+                            await btn.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.2)
+                            await btn.click()
+                            await asyncio.sleep(0.5)
+                            print(f"✓ Duration set to {duration_str} (Strategy 3: brute force search)")
+                            duration_found = True
+                            break
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"  Strategy 3 failed: {e}")
+        
+        # Strategy 4: XPath selector
+        if not duration_found:
+            try:
+                xpath = f"//button[contains(text(), '{duration_str}')]"
+                duration_btn = page.locator(f"xpath={xpath}")
+                if await duration_btn.count() > 0:
+                    await duration_btn.first.click()
+                    await asyncio.sleep(0.5)
+                    print(f"✓ Duration set to {duration_str} (Strategy 4: XPath)")
+                    duration_found = True
+            except Exception as e:
+                print(f"  Strategy 4 failed: {e}")
+        
+        if not duration_found:
+            print(f"⚠️ WARNING: Could not set duration to {duration_str}. Video may default to 5s.")
+            print(f"   Try manually selecting {duration_str} in PixVerse if video is wrong length.")
+        
+    except Exception as e:
+        print(f"Warning: Error setting controls: {e}")
 
     if style:
         try:

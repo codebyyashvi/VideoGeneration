@@ -226,7 +226,10 @@
       <span class="toggle-label">Auto-upload to YouTube after generation</span>
     </div>
 
-    <button class="submit-btn" id="generate-btn" onclick="generate()">⚡ Generate & Post Video</button>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+      <button class="submit-btn" id="generate-btn" onclick="generate()">⚡ Generate & Post Video</button>
+      <button class="submit-btn" style="background: linear-gradient(135deg, #22c55e 0%, #0ea5e9 100%);" id="contextual-btn" onclick="generateContextual()">🌍 Generate with Real-World Context</button>
+    </div>
   </div>
 
   <div class="card">
@@ -304,6 +307,49 @@ async function generate() {
     alert('Error: ' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '⚡ Generate & Post Video';
+  }
+}
+
+async function generateContextual() {
+  const topic = document.getElementById('topic').value.trim();
+  if (!topic) { alert('Please enter a topic.'); return; }
+
+  const btn = document.getElementById('contextual-btn');
+  btn.disabled = true; btn.textContent = '⏳ Fetching real-world data...';
+
+  const tags = document.getElementById('yt_tags').value
+    .split(',').map(t=>t.trim()).filter(Boolean);
+
+  const payload = {
+    topic,
+    theme: 'stressed_employee_scenario',  // Auto-use this theme for contextual
+    duration: parseInt(document.getElementById('duration').value),
+    quality: document.getElementById('quality').value,
+    style: document.getElementById('style').value || null,
+    auto_upload: document.getElementById('auto_upload').checked,
+    youtube_title: document.getElementById('yt_title').value || null,
+    youtube_description: document.getElementById('yt_desc').value || null,
+    youtube_tags: tags.length ? tags : null,
+  };
+
+  try {
+    const r = await fetch(`${api}/generate-contextual`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || JSON.stringify(d));
+    
+    // Clear form
+    document.getElementById('topic').value = '';
+    
+    await loadJobs();
+    // Auto-refresh while job running
+    startPolling(d.job_id);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '🌍 Generate with Real-World Context';
   }
 }
 
